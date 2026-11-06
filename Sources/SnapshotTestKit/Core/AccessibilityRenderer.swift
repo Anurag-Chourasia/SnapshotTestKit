@@ -34,15 +34,15 @@ public enum AccessibilityRenderer {
 
         public var themeColor: UIColor {
             if traits.contains(.button) {
-                return UIColor(red: 1.0, green: 0.58, blue: 0.0, alpha: 1.0) // Orange
+                return .systemOrange
             } else if traits.contains(.header) {
-                return UIColor(red: 0.69, green: 0.32, blue: 0.87, alpha: 1.0) // Purple
+                return .systemPurple
             } else if traits.contains(.image) {
-                return UIColor(red: 0.2, green: 0.78, blue: 0.35, alpha: 1.0) // Green
+                return .systemGreen
             } else if traits.contains(.link) {
-                return UIColor(red: 0.0, green: 0.78, blue: 1.0, alpha: 1.0) // Cyan
+                return .systemTeal
             } else {
-                return UIColor(red: 0.0, green: 0.48, blue: 1.0, alpha: 1.0) // iOS Blue
+                return .systemBlue
             }
         }
     }

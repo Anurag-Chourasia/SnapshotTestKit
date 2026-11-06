@@ -29,7 +29,8 @@ public final class DemoBannerView: UIView {
         layer.borderColor = UIColor.separator.cgColor
         layer.masksToBounds = true
 
-        iconImageView.image = UIImage(systemName: "bell.badge.fill")
+        let bannerIconName = "bell.badge.fill"
+        iconImageView.image = UIImage(systemName: bannerIconName)
         iconImageView.tintColor = .systemOrange
         iconImageView.contentMode = .scaleAspectFit
         iconImageView.translatesAutoresizingMaskIntoConstraints = false

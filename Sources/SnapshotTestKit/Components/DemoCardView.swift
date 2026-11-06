@@ -34,7 +34,8 @@ public struct DemoCardView: View {
 
                 Spacer()
 
-                Image(systemName: "checkmark.seal.fill")
+                let sealSymbolName = "checkmark.seal.fill"
+                Image(systemName: sealSymbolName)
                     .foregroundColor(.green)
                     .accessibilityLabel("Verified component")
             }
