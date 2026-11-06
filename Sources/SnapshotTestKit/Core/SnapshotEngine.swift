@@ -2,228 +2,135 @@
 import UIKit
 import XCTest
 
-/// Core comparison, disk persistence, and diffing engine for snapshot testing.
+/// Shared baseline policy, RGBA comparison, persistence and failure artifacts.
 public enum SnapshotEngine {
-    /// Determines whether record mode is active via explicit flag or environment variables.
     public static func isRecordMode(explicit: Bool) -> Bool {
-        if explicit { return true }
-        let env = ProcessInfo.processInfo.environment
-        return env["RECORD_SNAPSHOTS"] == "1" ||
-               env["SNAPSHOT_RECORD"] == "1"
+        SnapshotBaselinePolicy.recordingRequested(explicit: explicit, environment: ProcessInfo.processInfo.environment)
     }
 
-    /// Resolves the file URL for the baseline snapshot on disk.
-    public static func snapshotURL(
-        file: StaticString,
-        testName: String,
-        snapshotName: String?
-    ) -> URL {
-        let sourceURL = URL(fileURLWithPath: "\(file)")
-        let testClassName = sourceURL.deletingPathExtension().lastPathComponent
-        let snapshotsDir = sourceURL
-            .deletingLastPathComponent()
-            .appendingPathComponent("__Snapshots__", isDirectory: true)
-            .appendingPathComponent(testClassName, isDirectory: true)
-
-        let cleanTestName = sanitize(name: testName)
-        let filename: String
-        if let name = snapshotName, !name.isEmpty {
-            filename = "\(cleanTestName).\(name).png"
-        } else {
-            filename = "\(cleanTestName).png"
-        }
-
-        return snapshotsDir.appendingPathComponent(filename)
+    public static func snapshotURL(file: StaticString, testName: String, snapshotName: String?) -> URL {
+        let source = URL(fileURLWithPath: "\(file)")
+        let directory = source.deletingLastPathComponent().appendingPathComponent("__Snapshots__")
+            .appendingPathComponent(source.deletingPathExtension().lastPathComponent)
+        let suffix = snapshotName.flatMap { $0.isEmpty ? nil : "." + $0 } ?? ""
+        return directory.appendingPathComponent(sanitize(name: testName) + suffix + ".png")
     }
 
-    /// Strips trailing parentheses, argument labels, and special characters from test function names.
     public static func sanitize(name: String) -> String {
-        var clean = name
-        if let parenIndex = clean.firstIndex(of: "(") {
-            clean = String(clean[..<parenIndex])
-        }
-        return clean
-            .replacingOccurrences(of: " ", with: "_")
-            .replacingOccurrences(of: "/", with: "_")
-            .replacingOccurrences(of: "\\", with: "_")
+        String(name.prefix { $0 != "(" }).replacingOccurrences(of: " ", with: "_")
+            .replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "\\", with: "_")
     }
 
-    /// Compares a rendered UIImage against a reference image stored on disk.
     @discardableResult
-    public static func compare(
-        image: UIImage,
-        file: StaticString,
-        testName: String,
-        snapshotName: String?,
-        record: Bool = false,
-        precision: Float = 1.0,
-        perceptualPrecision: Float = 1.0,
-        line: UInt
-    ) -> Bool {
-        let referenceURL = snapshotURL(file: file, testName: testName, snapshotName: snapshotName)
-        let isRecord = isRecordMode(explicit: record)
+    public static func compare(image: UIImage, file: StaticString, testName: String, snapshotName: String?,
+                               record: Bool = false, precision: Float = 1, perceptualPrecision: Float = 1,
+                               line: UInt) -> Bool {
+        compare(image: image, referenceURL: snapshotURL(file: file, testName: testName, snapshotName: snapshotName),
+                record: record, precision: precision, perceptualPrecision: perceptualPrecision, file: file, line: line)
+    }
 
-        guard let currentData = image.pngData() else {
-            XCTFail("Failed to encode current snapshot to PNG data", file: file, line: line)
+    @discardableResult
+    static func compare(image: UIImage, referenceURL: URL, record: Bool, precision: Float,
+                        perceptualPrecision: Float, file: StaticString, line: UInt,
+                        environment: [String: String] = ProcessInfo.processInfo.environment) -> Bool {
+        guard precision.isFinite, perceptualPrecision.isFinite,
+              (0...1).contains(precision), (0...1).contains(perceptualPrecision) else {
+            XCTFail("Snapshot precision must be between zero and one", file: file, line: line)
             return false
         }
-
-        let fileManager = FileManager.default
-
-        // Record mode or missing baseline
-        if isRecord || !fileManager.fileExists(atPath: referenceURL.path) {
+        let recording = SnapshotBaselinePolicy.recordingRequested(explicit: record, environment: environment)
+        let action = SnapshotBaselinePolicy.action(baselineExists: FileManager.default.fileExists(atPath: referenceURL.path),
+                                                   recording: recording, environment: environment)
+        switch action {
+        case .recordingForbidden:
+            XCTFail("Recording snapshots is forbidden in CI", file: file, line: line)
+            return false
+        case .missing:
+            attach(image, name: "actual-missing-baseline")
+            XCTFail("Missing baseline: \(referenceURL.path). Record and review locally; CI never records.", file: file, line: line)
+            return false
+        case .record:
             do {
-                try fileManager.createDirectory(
-                    at: referenceURL.deletingLastPathComponent(),
-                    withIntermediateDirectories: true
-                )
-                try currentData.write(to: referenceURL, options: .atomic)
+                try FileManager.default.createDirectory(at: referenceURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try XCTUnwrap(image.pngData()).write(to: referenceURL, options: .atomic)
             } catch {
-                XCTFail("Failed to record snapshot to \(referenceURL.path): \(error)", file: file, line: line)
+                XCTFail("Failed to record snapshot: \(error)", file: file, line: line)
                 return false
             }
-
-            let message = """
-            No reference was found on disk. Automatically recorded snapshot: …
-
-            open "file://\(referenceURL.path)"
-
-            Re-run "\(sanitize(name: testName))" to assert against the newly-recorded snapshot.
-            """
-            XCTFail(message, file: file, line: line)
+            XCTFail("Recorded \(referenceURL.path). Inspect the image and rerun without recording.", file: file, line: line)
+            return false
+        case .compare:
+            break
+        }
+        guard let reference = UIImage(contentsOfFile: referenceURL.path) else {
+            XCTFail("Failed to read baseline: \(referenceURL.path)", file: file, line: line)
             return false
         }
-
-        // Baseline exists, load and compare
-        guard let referenceImage = UIImage(contentsOfFile: referenceURL.path) else {
-            XCTFail("Failed to load reference image at: \(referenceURL.path)", file: file, line: line)
-            return false
+        let result = compareImages(current: image, reference: reference, precision: precision, perceptualPrecision: perceptualPrecision)
+        guard !result.isMatch else { return true }
+        attach(reference, name: "reference")
+        attach(image, name: "actual")
+        if let diff = result.diffImage {
+            attach(diff, name: "diff")
+            try? diff.pngData()?.write(to: referenceURL.deletingPathExtension().appendingPathExtension("diff.png"), options: .atomic)
         }
-
-        let result = compareImages(
-            current: image,
-            reference: referenceImage,
-            precision: precision,
-            perceptualPrecision: perceptualPrecision
-        )
-
-        if result.isMatch {
-            return true
-        } else {
-            let diffURL = referenceURL.deletingPathExtension().appendingPathExtension("diff.png")
-            if let diffImage = result.diffImage, let diffData = diffImage.pngData() {
-                try? diffData.write(to: diffURL, options: .atomic)
-            }
-
-            let message = """
-            Snapshot mismatch (\(String(format: "%.2f%%", result.matchRate * 100)) match, required \(String(format: "%.2f%%", precision * 100))):
-            Reference: "file://\(referenceURL.path)"
-            Diff:      "file://\(diffURL.path)"
-            """
-            XCTFail(message, file: file, line: line)
-            return false
-        }
+        XCTFail("Snapshot mismatch: \(result.matchRate * 100)% match; required \(precision * 100)%. Reference: \(referenceURL.path)",
+                file: file, line: line)
+        return false
     }
 
-    /// Performs pixel-by-pixel bitmap comparison with precision thresholds and generates a diff image on mismatch.
-    public static func compareImages(
-        current: UIImage,
-        reference: UIImage,
-        precision: Float,
-        perceptualPrecision: Float
-    ) -> (isMatch: Bool, matchRate: Float, diffImage: UIImage?) {
-        guard let curCG = current.cgImage, let refCG = reference.cgImage else {
+    public static func compareImages(current: UIImage, reference: UIImage, precision: Float,
+                                     perceptualPrecision: Float) -> (isMatch: Bool, matchRate: Float, diffImage: UIImage?) {
+        guard precision.isFinite, perceptualPrecision.isFinite,
+              (0...1).contains(precision), (0...1).contains(perceptualPrecision),
+              let currentCG = current.cgImage, let referenceCG = reference.cgImage,
+              currentCG.width == referenceCG.width, currentCG.height == referenceCG.height,
+              let actual = rgba(currentCG), let expected = rgba(referenceCG) else { return (false, 0, nil) }
+        let threshold = UInt8((1 - perceptualPrecision) * 255)
+        guard let difference = PixelComparison.difference(actual: actual, reference: expected, channelTolerance: threshold) else {
             return (false, 0, nil)
         }
-
-        let width = curCG.width
-        let height = curCG.height
-
-        guard width == refCG.width && height == refCG.height else {
-            return (false, 0, nil)
-        }
-
-        let bytesPerPixel = 4
-        let bytesPerRow = bytesPerPixel * width
-        let totalBytes = bytesPerRow * height
-        let totalPixels = width * height
-
-        var curPixels = [UInt8](repeating: 0, count: totalBytes)
-        var refPixels = [UInt8](repeating: 0, count: totalBytes)
-        var diffPixels = [UInt8](repeating: 0, count: totalBytes)
-
-        let colorSpace = CGColorSpaceCreateDeviceRGB()
-        let bitmapInfo = CGImageAlphaInfo.premultipliedLast.rawValue
-
-        guard
-            let curCtx = CGContext(
-                data: &curPixels,
-                width: width,
-                height: height,
-                bitsPerComponent: 8,
-                bytesPerRow: bytesPerRow,
-                space: colorSpace,
-                bitmapInfo: bitmapInfo
-            ),
-            let refCtx = CGContext(
-                data: &refPixels,
-                width: width,
-                height: height,
-                bitsPerComponent: 8,
-                bytesPerRow: bytesPerRow,
-                space: colorSpace,
-                bitmapInfo: bitmapInfo
-            ),
-            let diffCtx = CGContext(
-                data: &diffPixels,
-                width: width,
-                height: height,
-                bitsPerComponent: 8,
-                bytesPerRow: bytesPerRow,
-                space: colorSpace,
-                bitmapInfo: bitmapInfo
-            )
-        else {
-            return (false, 0, nil)
-        }
-
-        let rect = CGRect(x: 0, y: 0, width: width, height: height)
-        curCtx.draw(curCG, in: rect)
-        refCtx.draw(refCG, in: rect)
-
-        var matchingPixels = 0
-        let threshold = Int((1.0 - min(max(perceptualPrecision, 0.0), 1.0)) * 255.0)
-
-        for i in 0..<totalPixels {
-            let offset = i * bytesPerPixel
-            let rDiff = abs(Int(curPixels[offset]) - Int(refPixels[offset]))
-            let gDiff = abs(Int(curPixels[offset + 1]) - Int(refPixels[offset + 1]))
-            let bDiff = abs(Int(curPixels[offset + 2]) - Int(refPixels[offset + 2]))
-            let aDiff = abs(Int(curPixels[offset + 3]) - Int(refPixels[offset + 3]))
-
-            if rDiff <= threshold && gDiff <= threshold && bDiff <= threshold && aDiff <= threshold {
-                matchingPixels += 1
-                diffPixels[offset] = curPixels[offset] / 2
-                diffPixels[offset + 1] = curPixels[offset + 1] / 2
-                diffPixels[offset + 2] = curPixels[offset + 2] / 2
-                diffPixels[offset + 3] = curPixels[offset + 3]
+        let matchRate = Float(1 - difference)
+        guard matchRate < precision else { return (true, matchRate, nil) }
+        var pixels = actual
+        for offset in stride(from: 0, to: pixels.count, by: 4) {
+            let changed = (0..<4).contains { abs(Int(actual[offset + $0]) - Int(expected[offset + $0])) > Int(threshold) }
+            if changed {
+                pixels[offset] = 255; pixels[offset + 1] = 0; pixels[offset + 2] = 255; pixels[offset + 3] = 255
             } else {
-                diffPixels[offset] = 255
-                diffPixels[offset + 1] = 0
-                diffPixels[offset + 2] = 255
-                diffPixels[offset + 3] = 255
+                pixels[offset] /= 2; pixels[offset + 1] /= 2; pixels[offset + 2] /= 2
             }
         }
-
-        let matchRate = Float(matchingPixels) / Float(totalPixels)
-        let isMatch = matchRate >= precision
-
-        var diffImage: UIImage? = nil
-        if !isMatch, let diffCG = diffCtx.makeImage() {
-            diffImage = UIImage(cgImage: diffCG, scale: current.scale, orientation: .up)
+        guard let provider = CGDataProvider(data: Data(pixels) as CFData),
+              let diff = CGImage(width: currentCG.width, height: currentCG.height, bitsPerComponent: 8, bitsPerPixel: 32,
+                                 bytesPerRow: currentCG.width * 4, space: CGColorSpaceCreateDeviceRGB(),
+                                 bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue),
+                                 provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent) else {
+            return (false, matchRate, nil)
         }
+        return (false, matchRate, UIImage(cgImage: diff, scale: current.scale, orientation: .up))
+    }
 
-        return (isMatch, matchRate, diffImage)
+    private static func rgba(_ image: CGImage) -> [UInt8]? {
+        var bytes = [UInt8](repeating: 0, count: image.width * image.height * 4)
+        let success = bytes.withUnsafeMutableBytes { buffer -> Bool in
+            guard let context = CGContext(data: buffer.baseAddress, width: image.width, height: image.height,
+                                          bitsPerComponent: 8, bytesPerRow: image.width * 4,
+                                          space: CGColorSpaceCreateDeviceRGB(),
+                                          bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return false }
+            context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+            return true
+        }
+        return success ? bytes : nil
+    }
+
+    private static func attach(_ image: UIImage, name: String) {
+        XCTContext.runActivity(named: name) { activity in
+            let attachment = XCTAttachment(image: image)
+            attachment.name = name
+            attachment.lifetime = .keepAlways
+            activity.add(attachment)
+        }
     }
 }
 #endif
