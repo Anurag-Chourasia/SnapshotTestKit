@@ -83,7 +83,11 @@ public enum SnapshotEngine {
                                      perceptualPrecision: Float) -> (isMatch: Bool, matchRate: Float, diffImage: UIImage?) {
         guard precision.isFinite, perceptualPrecision.isFinite,
               (0...1).contains(precision), (0...1).contains(perceptualPrecision),
-              let currentCG = current.cgImage, let referenceCG = reference.cgImage,
+              // References are persisted PNGs. Normalize both inputs through that codec so
+              // extended-range UIKit pixels are compared in the same representation.
+              let currentData = current.pngData(), let referenceData = reference.pngData(),
+              let currentCG = UIImage(data: currentData)?.cgImage,
+              let referenceCG = UIImage(data: referenceData)?.cgImage,
               currentCG.width == referenceCG.width, currentCG.height == referenceCG.height,
               let actual = rgba(currentCG), let expected = rgba(referenceCG) else { return (false, 0, nil) }
         let threshold = UInt8((1 - perceptualPrecision) * 255)

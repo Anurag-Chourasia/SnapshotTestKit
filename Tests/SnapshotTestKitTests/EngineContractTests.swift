@@ -24,6 +24,7 @@ final class EngineContractTests: XCTestCase {
         let format = UIGraphicsImageRendererFormat()
         format.scale = 1
         format.opaque = true
+        format.preferredRange = .extended
         let actual = UIGraphicsImageRenderer(size: CGSize(width: 414, height: 896), format: format).image { context in
             UIColor(displayP3Red: 0.96, green: 0.94, blue: 0.98, alpha: 1).setFill()
             context.fill(CGRect(x: 0, y: 0, width: 414, height: 896))
