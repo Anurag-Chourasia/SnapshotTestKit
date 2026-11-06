@@ -11,6 +11,10 @@ let package = Package(
         .library(
             name: "SnapshotTestKit",
             targets: ["SnapshotTestKit"]
+        ),
+        .library(
+            name: "SnapshotTestingKit",
+            targets: ["SnapshotTestKit"]
         )
     ],
     targets: [
