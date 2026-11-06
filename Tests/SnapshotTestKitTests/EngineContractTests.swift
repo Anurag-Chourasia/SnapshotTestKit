@@ -20,6 +20,22 @@ final class EngineContractTests: XCTestCase {
         XCTExpectFailure(message, options: options, failingBlock: action)
     }
 
+    func testRasterTextAndWideColorSurvivePNGReferenceRoundTrip() throws {
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        format.opaque = true
+        let actual = UIGraphicsImageRenderer(size: CGSize(width: 414, height: 896), format: format).image { context in
+            UIColor(displayP3Red: 0.96, green: 0.94, blue: 0.98, alpha: 1).setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 414, height: 896))
+            ("Know Your Developer" as NSString).draw(at: CGPoint(x: 20, y: 35), withAttributes: [
+                .font: UIFont.boldSystemFont(ofSize: 22), .foregroundColor: UIColor.label
+            ])
+        }
+        let reference = try XCTUnwrap(UIImage(data: XCTUnwrap(actual.pngData())))
+        let result = SnapshotEngine.compareImages(current: actual, reference: reference, precision: 1, perceptualPrecision: 1)
+        XCTAssertTrue(result.isMatch, "A freshly recorded raster must compare exactly: \(result.matchRate)")
+    }
+
     func testMissingBaselineFailsWithoutCreatingFileOrDirectory() {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let reference = folder.appendingPathComponent("missing.png")
