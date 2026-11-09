@@ -3,6 +3,7 @@ import XCTest
 import UIKit
 @testable import SnapshotTestKit
 
+@MainActor
 final class UIKitSnapshotTests: XCTestCase {
     func testDemoBannerViewSnapshots() throws {
         guard SnapshotDevice.current == .iPhone11 else {

@@ -4,6 +4,7 @@ import SwiftUI
 import XCTest
 
 /// Public assertion API providing snapshot testing across Light, Dark, and Accessibility modalities.
+@MainActor
 public enum SnapshotAssert {
     /// Checks whether record mode is active either explicitly or via environment variables (`RECORD_SNAPSHOTS=1` or `SNAPSHOT_RECORD=1`).
     public static var isRecordModeEnabled: Bool {
@@ -35,27 +36,25 @@ public enum SnapshotAssert {
         testName: String = #function,
         line: UInt = #line
     ) {
-        runOnMain {
-            let hostingController = UIHostingController(rootView: view)
-            let config = device.config
-            let width = config.size?.width ?? 414
-            let height = config.size?.height ?? 896
-            hostingController.view.bounds = CGRect(x: 0, y: 0, width: width, height: height)
-            hostingController.view.layoutIfNeeded()
+        let hostingController = UIHostingController(rootView: view)
+        let config = device.config
+        let width = config.size?.width ?? 414
+        let height = config.size?.height ?? 896
+        hostingController.view.bounds = CGRect(x: 0, y: 0, width: width, height: height)
+        hostingController.view.layoutIfNeeded()
 
-            assertVariants(
-                of: hostingController,
-                on: device,
-                named: named,
-                variants: variants,
-                record: record,
-                precision: precision,
-                perceptualPrecision: perceptualPrecision,
-                file: file,
-                testName: testName,
-                line: line
-            )
-        }
+        assertVariants(
+            of: hostingController,
+            on: device,
+            named: named,
+            variants: variants,
+            record: record,
+            precision: precision,
+            perceptualPrecision: perceptualPrecision,
+            file: file,
+            testName: testName,
+            line: line
+        )
     }
 
     /// Asserts snapshots for a UIViewController in 3 variants: Light, Dark, and Accessibility on the specified device.
@@ -83,8 +82,7 @@ public enum SnapshotAssert {
         testName: String = #function,
         line: UInt = #line
     ) {
-        runOnMain {
-            let deviceSuffix = (device == .iPhone11) ? "" : "-\(device.identifier)"
+        let deviceSuffix = (device == .iPhone11) ? "" : "-\(device.identifier)"
             let baseName: String
             if let customName = named {
                 baseName = "\(customName)\(deviceSuffix)-"
@@ -138,7 +136,6 @@ public enum SnapshotAssert {
                     line: line
                 )
             }
-        }
     }
 
     /// Asserts snapshots for a UIView in 3 variants: Light, Dark, and Accessibility on the specified device.
@@ -166,52 +163,35 @@ public enum SnapshotAssert {
         testName: String = #function,
         line: UInt = #line
     ) {
-        runOnMain {
-            let containerController = UIViewController()
-            containerController.view.backgroundColor = .systemBackground
-            containerController.view.addSubview(view)
-            view.translatesAutoresizingMaskIntoConstraints = false
-            NSLayoutConstraint.activate([
-                view.centerXAnchor.constraint(equalTo: containerController.view.centerXAnchor),
-                view.centerYAnchor.constraint(equalTo: containerController.view.centerYAnchor),
-                view.leadingAnchor.constraint(greaterThanOrEqualTo: containerController.view.leadingAnchor, constant: 16),
-                view.trailingAnchor.constraint(lessThanOrEqualTo: containerController.view.trailingAnchor, constant: -16)
-            ])
+        let containerController = UIViewController()
+        containerController.view.backgroundColor = .systemBackground
+        containerController.view.addSubview(view)
+        view.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            view.centerXAnchor.constraint(equalTo: containerController.view.centerXAnchor),
+            view.centerYAnchor.constraint(equalTo: containerController.view.centerYAnchor),
+            view.leadingAnchor.constraint(greaterThanOrEqualTo: containerController.view.leadingAnchor, constant: 16),
+            view.trailingAnchor.constraint(lessThanOrEqualTo: containerController.view.trailingAnchor, constant: -16)
+        ])
 
-            let config = device.config
-            let width = config.size?.width ?? 414
-            let height = config.size?.height ?? 896
-            containerController.view.bounds = CGRect(x: 0, y: 0, width: width, height: height)
-            containerController.view.layoutIfNeeded()
+        let config = device.config
+        let width = config.size?.width ?? 414
+        let height = config.size?.height ?? 896
+        containerController.view.bounds = CGRect(x: 0, y: 0, width: width, height: height)
+        containerController.view.layoutIfNeeded()
 
-            assertVariants(
-                of: containerController,
-                on: device,
-                named: named,
-                variants: variants,
-                record: record,
-                precision: precision,
-                perceptualPrecision: perceptualPrecision,
-                file: file,
-                testName: testName,
-                line: line
-            )
-        }
-    }
-
-    /// Helper to execute a block on the main actor synchronously.
-    private static func runOnMain(_ block: @MainActor () -> Void) {
-        if Thread.isMainThread {
-            MainActor.assumeIsolated {
-                block()
-            }
-        } else {
-            DispatchQueue.main.sync {
-                MainActor.assumeIsolated {
-                    block()
-                }
-            }
-        }
+        assertVariants(
+            of: containerController,
+            on: device,
+            named: named,
+            variants: variants,
+            record: record,
+            precision: precision,
+            perceptualPrecision: perceptualPrecision,
+            file: file,
+            testName: testName,
+            line: line
+        )
     }
 }
 
@@ -226,6 +206,7 @@ public enum SnapshotStrategy<Value> {
     )
 }
 
+@MainActor
 public func assertSnapshot<V: View>(
     of view: V,
     as strategy: SnapshotStrategy<V> = .image(),
@@ -235,17 +216,7 @@ public func assertSnapshot<V: View>(
     testName: String = #function,
     line: UInt = #line
 ) {
-    if Thread.isMainThread {
-        MainActor.assumeIsolated {
-            executeAssertSnapshot(of: view, as: strategy, named: name, record: record, file: file, testName: testName, line: line)
-        }
-    } else {
-        DispatchQueue.main.sync {
-            MainActor.assumeIsolated {
-                executeAssertSnapshot(of: view, as: strategy, named: name, record: record, file: file, testName: testName, line: line)
-            }
-        }
-    }
+    executeAssertSnapshot(of: view, as: strategy, named: name, record: record, file: file, testName: testName, line: line)
 }
 
 @MainActor

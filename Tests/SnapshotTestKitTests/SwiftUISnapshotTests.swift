@@ -3,6 +3,7 @@ import XCTest
 import SwiftUI
 @testable import SnapshotTestKit
 
+@MainActor
 final class SwiftUISnapshotTests: XCTestCase {
     func testDemoCardViewSnapshots() throws {
         guard SnapshotDevice.current == .iPhone11 else {
